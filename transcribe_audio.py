@@ -10,13 +10,15 @@ import sys
 from pydub import AudioSegment
 import tempfile
 import math
+import argparse
+import subprocess
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # Constants
-MAX_CHUNK_SIZE = 300 * 1024 * 1024  # 300MB limit for Gemini API
+DEFAULT_CHUNK_SIZE = 50 * 1024 * 1024  # 50MB default limit for Gemini API
 CHUNK_DURATION = 10 * 60 * 1000  # 10 minutes in milliseconds
 
 # Load environment variables
@@ -60,39 +62,84 @@ When transcribing, add line breaks between different paragraphs or distinct segm
 
 """
 
-def get_file_chunks(audio_path):
+def trim_audio_with_ffmpeg(input_path, output_path, duration):
     """
-    Split audio file into chunks if it's too large
-    Returns: List of temporary file paths for chunks
+    Trim audio file using ffmpeg without loading entire file into memory
     """
-    audio = AudioSegment.from_mp3(audio_path)
-    total_duration = len(audio)
-    
-    # If file is small enough, return it as is
-    if os.path.getsize(audio_path) <= MAX_CHUNK_SIZE:
-        return [audio_path]
-    
-    # Calculate number of chunks needed
-    num_chunks = math.ceil(total_duration / CHUNK_DURATION)
-    chunk_paths = []
-    
-    logger.info(f"Splitting audio into {num_chunks} chunks...")
-    
-    # Create temporary directory for chunks
-    with tempfile.TemporaryDirectory() as temp_dir:
+    try:
+        cmd = ['ffmpeg', '-i', input_path, '-t', str(duration), '-acodec', 'copy', output_path, '-y']
+        subprocess.run(cmd, check=True, capture_output=True)
+        return True
+    except subprocess.CalledProcessError as e:
+        logger.error(f"FFmpeg error: {e.stderr.decode()}")
+        return False
+
+class AudioChunker:
+    def __init__(self, max_chunk_size=DEFAULT_CHUNK_SIZE, test_duration=None):
+        self.max_chunk_size = max_chunk_size
+        self.test_duration = test_duration  # in seconds
+        self.temp_dir = None
+        self.chunk_paths = []
+
+    def __enter__(self):
+        self.temp_dir = tempfile.mkdtemp()
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        # Clean up temporary files
+        if self.temp_dir:
+            for chunk_path in self.chunk_paths:
+                try:
+                    if os.path.exists(chunk_path):
+                        os.remove(chunk_path)
+                except Exception as e:
+                    logger.warning(f"Failed to remove temporary file {chunk_path}: {e}")
+            try:
+                os.rmdir(self.temp_dir)
+            except Exception as e:
+                logger.warning(f"Failed to remove temporary directory {self.temp_dir}: {e}")
+
+    def get_file_chunks(self, audio_path):
+        """
+        Split audio file into chunks if it's too large
+        Returns: List of temporary file paths for chunks
+        """
+        # For test mode, trim the audio first using ffmpeg
+        if self.test_duration is not None:
+            trimmed_path = os.path.join(self.temp_dir, "trimmed.mp3")
+            if trim_audio_with_ffmpeg(audio_path, trimmed_path, self.test_duration):
+                logger.info(f"Created trimmed audio file for test duration: {self.test_duration}s")
+                audio_path = trimmed_path
+                self.chunk_paths.append(trimmed_path)
+            else:
+                logger.warning("Failed to trim audio, proceeding with full file")
+        
+        # If file is small enough, use it directly
+        if os.path.getsize(audio_path) <= self.max_chunk_size:
+            if audio_path not in self.chunk_paths:
+                self.chunk_paths.append(audio_path)
+            return self.chunk_paths
+        
+        # For larger files, split into chunks
+        audio = AudioSegment.from_mp3(audio_path)
+        total_duration = len(audio)
+        
+        # Calculate number of chunks needed
+        num_chunks = math.ceil(total_duration / CHUNK_DURATION)
+        logger.info(f"Splitting audio into {num_chunks} chunks...")
+        
         for i in range(num_chunks):
             start_time = i * CHUNK_DURATION
             end_time = min((i + 1) * CHUNK_DURATION, total_duration)
             
             chunk = audio[start_time:end_time]
-            chunk_path = os.path.join(temp_dir, f"chunk_{i}.mp3")
+            chunk_path = os.path.join(self.temp_dir, f"chunk_{i}.mp3")
             chunk.export(chunk_path, format="mp3")
-            chunk_paths.append(chunk_path)
+            self.chunk_paths.append(chunk_path)
             
             logger.info(f"Created chunk {i+1}/{num_chunks}")
         
-        # Return list of chunk paths
-        return chunk_paths
+        return self.chunk_paths
 
 def transcribe_audio_chunk(audio_path):
     """
@@ -144,30 +191,31 @@ def transcribe_audio_chunk(audio_path):
     finally:
         gc.collect()
 
-def transcribe_audio(audio_path):
+def transcribe_audio(audio_path, max_chunk_size=DEFAULT_CHUNK_SIZE, test_duration=None):
     """
     Transcribe audio file, handling large files by chunking
     """
     try:
-        # Get chunks (might be just one if file is small enough)
-        chunk_paths = get_file_chunks(audio_path)
-        
-        if len(chunk_paths) == 1:
-            # Single chunk, process normally
-            return transcribe_audio_chunk(chunk_paths[0])
-        else:
-            # Multiple chunks, process each and combine
-            logger.info(f"Processing {len(chunk_paths)} chunks...")
-            transcripts = []
+        with AudioChunker(max_chunk_size=max_chunk_size, test_duration=test_duration) as chunker:
+            # Get chunks (might be just one if file is small enough)
+            chunk_paths = chunker.get_file_chunks(audio_path)
             
-            for i, chunk_path in enumerate(chunk_paths):
-                logger.info(f"Processing chunk {i+1}/{len(chunk_paths)}...")
-                chunk_transcript = transcribe_audio_chunk(chunk_path)
-                transcripts.append(f"\n\n--- Segment {i+1} ---\n\n{chunk_transcript}")
-            
-            # Combine all transcripts
-            return "".join(transcripts)
-            
+            if len(chunk_paths) == 1:
+                # Single chunk, process normally
+                return transcribe_audio_chunk(chunk_paths[0])
+            else:
+                # Multiple chunks, process each and combine
+                logger.info(f"Processing {len(chunk_paths)} chunks...")
+                transcripts = []
+                
+                for i, chunk_path in enumerate(chunk_paths):
+                    logger.info(f"Processing chunk {i+1}/{len(chunk_paths)}...")
+                    chunk_transcript = transcribe_audio_chunk(chunk_path)
+                    transcripts.append(f"\n\n--- Segment {i+1} ---\n\n{chunk_transcript}")
+                
+                # Combine all transcripts
+                return "".join(transcripts)
+                
     except Exception as e:
         logger.error(f"Error transcribing audio: {str(e)}")
         raise
@@ -184,30 +232,53 @@ def save_transcript(transcript, output_path):
         logger.error(f"Error saving transcript: {str(e)}")
         raise
 
+def parse_size(size_str):
+    """Convert a string like '10mb' to bytes"""
+    size_str = size_str.lower()
+    if size_str.endswith('mb'):
+        return int(float(size_str[:-2]) * 1024 * 1024)
+    elif size_str.endswith('gb'):
+        return int(float(size_str[:-2]) * 1024 * 1024 * 1024)
+    elif size_str.endswith('kb'):
+        return int(float(size_str[:-2]) * 1024)
+    else:
+        try:
+            return int(size_str)
+        except ValueError:
+            raise argparse.ArgumentTypeError('Size must be specified as a number with optional suffix kb/mb/gb')
+
 def main():
     """
     Main function to handle MP3 transcription
     """
-    if len(sys.argv) != 2:
-        print("Usage: python transcribe.py <path_to_mp3_file>")
-        sys.exit(1)
-
-    mp3_path = sys.argv[1]
+    parser = argparse.ArgumentParser(description='Transcribe MP3 audio files using Gemini API')
+    parser.add_argument('mp3_path', help='Path to the MP3 file to transcribe')
+    parser.add_argument('--chunk-size', type=parse_size, default=DEFAULT_CHUNK_SIZE,
+                      help='Maximum chunk size (e.g., "10mb", "1gb"). Default is 50mb')
+    parser.add_argument('--test-duration', type=int,
+                      help='Test mode: Only process the first N seconds of audio')
     
-    if not os.path.exists(mp3_path):
-        print(f"Error: File {mp3_path} does not exist")
+    args = parser.parse_args()
+    
+    if not os.path.exists(args.mp3_path):
+        print(f"Error: File {args.mp3_path} does not exist")
         sys.exit(1)
         
-    if not mp3_path.lower().endswith('.mp3'):
+    if not args.mp3_path.lower().endswith('.mp3'):
         print("Error: File must be an MP3 file")
         sys.exit(1)
 
     try:
         # Get output path by replacing .mp3 extension with .md
-        output_path = os.path.splitext(mp3_path)[0] + '.md'
+        output_path = os.path.splitext(args.mp3_path)[0] + '.md'
         
-        print(f"Processing {mp3_path}...")
-        transcript = transcribe_audio(mp3_path)
+        print(f"Processing {args.mp3_path}...")
+        print(f"Using maximum chunk size of {args.chunk_size / (1024*1024):.2f}MB")
+        if args.test_duration:
+            print(f"Test mode: Processing only first {args.test_duration} seconds")
+        
+        transcript = transcribe_audio(args.mp3_path, max_chunk_size=args.chunk_size, 
+                                   test_duration=args.test_duration)
         save_transcript(transcript, output_path)
         print(f"Transcription complete! Output saved to {output_path}")
         

@@ -1,47 +1,86 @@
-# Twitter Spaces Downloader
+# Twitter Space Downloader and Transcriber
 
-A Python script to download Twitter Spaces info using yt-dlp. 
-
-let's you
-- download the video as .mp4 file
-- converts the video to audio as .mp3 file
-- option to transcribe the audio using gemini. 
-
+This tool downloads Twitter Spaces as video and audio and optionally transcribes them using Google's Gemini AI API.
 
 ## Prerequisites
 
-- Python 3.x
-- FFmpeg (required for audio conversion)
+1. Python 3.x
+2. Required Python packages:
+   ```bash
+   pip install yt-dlp pydub google-generativeai python-dotenv
+   ```
+3. FFmpeg (required for audio processing)
+   - On macOS: `brew install ffmpeg`
+   - On Ubuntu/Debian: `sudo apt-get install ffmpeg`
+   - On Windows: Download from [FFmpeg website](https://ffmpeg.org/download.html)
 
-## Installation
-
-1. Install FFmpeg:
-   - macOS (using Homebrew): `brew install ffmpeg`
-   - Linux: `sudo apt-get install ffmpeg`
-   - Windows: Download from [FFmpeg website](https://ffmpeg.org/download.html)
-
-2. Create and activate virtual environment:
-```bash
-python3 -m venv venv
-source venv/bin/activate  # On Windows, use: venv\Scripts\activate
-```
-
-3. Install Python dependencies:
-```bash
-pip install -r requirements.txt
-```
+4. Google AI API Key
+   - Create a `.env` file in the project directory
+   - Add your Google AI API key:
+     ```
+     GOOGLE_AI_API_KEY=your_api_key_here
+     ```
 
 ## Usage
 
-Run the script:
+The script provides several options for downloading and processing Twitter Spaces:
+
+1. Download video and create transcription (default):
 ```bash
-python download_space.py
+python download_transcribe_space.py
 ```
 
-The script will download the Twitter Space audio and save it as an MP3 file in the current directory. The file will be named `twitter_space_[timestamp].mp3`.
+2. Download video only (no transcription):
+```bash
+python download_transcribe_space.py --no-transcribe
+```
 
-## Notes
+3. Extract audio only (MP3) and create transcription:
+```bash
+python download_transcribe_space.py --no-video
+```
 
-- The script will automatically convert the downloaded audio to MP3 format
-- The output filename includes a timestamp to avoid overwriting files
-- If you encounter any errors, make sure you have FFmpeg installed and all dependencies are properly installed
+4. Extract audio only (no transcription):
+```bash
+python download_transcribe_space.py --no-video --no-transcribe
+```
+
+## Output Files
+
+The script generates files with consistent naming based on the download timestamp:
+- Video file (if kept): `twitter_space_[timestamp].[ext]`
+- MP3 file (if needed): `twitter_space_[timestamp].mp3`
+- Transcription (if requested): `twitter_space_[timestamp].md`
+
+## Features
+
+- Downloads Twitter Spaces in highest available quality
+- Option to keep or discard video file
+- Automatic MP3 extraction when needed
+- High-quality transcription using Google's Gemini AI
+- Speaker detection and timestamps in transcriptions
+- Progress indicators for each step
+
+## Transcription Features
+
+The transcription includes:
+- Speaker identification (labeled as Speaker 1, Speaker 2, etc.)
+- Timestamps throughout the conversation
+- Proper formatting and paragraph breaks
+- Markdown output for easy reading and sharing
+
+## Error Handling
+
+The script includes robust error handling for:
+- Download failures
+- Audio conversion issues
+- Transcription errors
+- File system operations
+
+## Requirements
+
+See `requirements.txt` for a complete list of Python dependencies.
+
+## Testing 
+
+python transcribe_audio.py gauntlet_demo_day_pt1.mp3 --test-duration 1200
