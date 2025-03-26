@@ -55,21 +55,27 @@ def model_context():
 TRANSCRIPTION_PROMPT = """Transcribe this audio accurately in its original language, including all silent periods.
 
 Important timing instructions:
-1. Start timestamps from the very beginning of the audio file (0:00)
+1. Start timestamps from {start_time} minutes into the audio file
 2. Note any significant periods of silence (5 seconds or longer) with timestamps like:
-   [0:00 - 0:45] (Silence)
-3. For speech segments, identify and label speakers as 'Speaker 1:', 'Speaker 2:', etc.
+   [{start_time}:00 - {next_minute}:45] (Silence)
+3. For speech segments, YOU MUST IDENTIFY and LABEL each speaker clearly as 'Speaker 1:', 'Speaker 2:', etc.
 
 Example format:
-[0:00 - 0:30] (Silence)
-[0:30] Speaker 1: Hello everyone...
-[1:20 - 2:00] (Silence)
-[2:00] Speaker 2: Yes, I agree...
+[{start_time}:00 - {start_time}:30] (Silence)
+[{start_time}:30] Speaker 1: Hello everyone...
+[{next_minute}:20 - {next_minute}:00] (Silence)
+[{next_minute}:00] Speaker 2: Yes, I agree...
 
 Do not include any headers, titles, or additional text - only the transcription itself.
 
 When transcribing, add line breaks between different paragraphs or distinct segments of speech to improve readability.
 """
+
+def format_timestamp(seconds):
+    """Convert seconds to MM:SS format"""
+    minutes = int(seconds / 60)
+    remaining_seconds = int(seconds % 60)
+    return f"{minutes:02d}:{remaining_seconds:02d}"
 
 def trim_audio_with_ffmpeg(input_path, output_path, duration):
     """
@@ -150,7 +156,7 @@ class AudioChunker:
         
         return self.chunk_paths
 
-def transcribe_audio_chunk(audio_path):
+def transcribe_audio_chunk(audio_path, start_time_seconds=0):
     """
     Transcribe a single audio chunk using Gemini API
     """
@@ -160,8 +166,17 @@ def transcribe_audio_chunk(audio_path):
             audio_data = audio_file.read()
             
         audio_base64 = base64.b64encode(audio_data).decode('utf-8')
+        
+        # Format the prompt with the correct start time
+        start_minutes = int(start_time_seconds / 60)
+        next_minute = start_minutes + 1
+        formatted_prompt = TRANSCRIPTION_PROMPT.format(
+            start_time=start_minutes,
+            next_minute=next_minute
+        )
+        
         content_parts = [
-            {"text": TRANSCRIPTION_PROMPT},
+            {"text": formatted_prompt},
             {
                 "inline_data": {
                     "mime_type": "audio/mp3",
@@ -217,10 +232,12 @@ def transcribe_audio(audio_path, max_chunk_size=DEFAULT_CHUNK_SIZE, test_duratio
                 logger.info(f"Processing {len(chunk_paths)} chunks...")
                 transcripts = []
                 max_speaker_num = 0  # Track highest speaker number
+                chunk_duration_seconds = CHUNK_DURATION / 1000  # Convert ms to seconds
                 
                 for i, chunk_path in enumerate(chunk_paths):
                     logger.info(f"Processing chunk {i+1}/{len(chunk_paths)}...")
-                    chunk_transcript = transcribe_audio_chunk(chunk_path)
+                    start_time_seconds = i * chunk_duration_seconds
+                    chunk_transcript = transcribe_audio_chunk(chunk_path, start_time_seconds)
                     
                     # If not the first chunk, update speaker numbers
                     if i > 0 and max_speaker_num > 0:
@@ -250,7 +267,7 @@ def transcribe_audio(audio_path, max_chunk_size=DEFAULT_CHUNK_SIZE, test_duratio
                     if speaker_labels:
                         max_speaker_num = max(max_speaker_num, max(speaker_labels))
                     
-                    transcripts.append(f"\n\n--- Segment {i+1} ---\n\n{chunk_transcript}")
+                    transcripts.append(f"\n\n--- Segment {i+1} (Starting at {format_timestamp(start_time_seconds)}) ---\n\n{chunk_transcript}")
                 
                 # Combine all transcripts
                 return "".join(transcripts)
