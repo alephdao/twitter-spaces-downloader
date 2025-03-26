@@ -18,7 +18,7 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # Constants
-DEFAULT_CHUNK_SIZE = 50 * 1024 * 1024  # 50MB default limit for Gemini API
+DEFAULT_CHUNK_SIZE = 300 * 1024 * 1024  # 300MB default limit for Gemini API
 CHUNK_DURATION = 10 * 60 * 1000  # 10 minutes in milliseconds
 
 # Load environment variables
@@ -52,14 +52,23 @@ def model_context():
         gc.collect()
 
 # Update the prompt to be more specific
-TRANSCRIPTION_PROMPT = """Transcribe this audio accurately in its original language.
+TRANSCRIPTION_PROMPT = """Transcribe this audio accurately in its original language, including all silent periods.
 
-If there are multiple speakers, identify and label them as 'Speaker 1:', 'Speaker 2:', etc. Include timestamps.
+Important timing instructions:
+1. Start timestamps from the very beginning of the audio file (0:00)
+2. Note any significant periods of silence (5 seconds or longer) with timestamps like:
+   [0:00 - 0:45] (Silence)
+3. For speech segments, identify and label speakers as 'Speaker 1:', 'Speaker 2:', etc.
+
+Example format:
+[0:00 - 0:30] (Silence)
+[0:30] Speaker 1: Hello everyone...
+[1:20 - 2:00] (Silence)
+[2:00] Speaker 2: Yes, I agree...
 
 Do not include any headers, titles, or additional text - only the transcription itself.
 
 When transcribing, add line breaks between different paragraphs or distinct segments of speech to improve readability.
-
 """
 
 def trim_audio_with_ffmpeg(input_path, output_path, duration):
@@ -254,7 +263,7 @@ def main():
     parser = argparse.ArgumentParser(description='Transcribe MP3 audio files using Gemini API')
     parser.add_argument('mp3_path', help='Path to the MP3 file to transcribe')
     parser.add_argument('--chunk-size', type=parse_size, default=DEFAULT_CHUNK_SIZE,
-                      help='Maximum chunk size (e.g., "10mb", "1gb"). Default is 50mb')
+                      help='Maximum chunk size (e.g., "10mb", "1gb"). Default is 300mb')
     parser.add_argument('--test-duration', type=int,
                       help='Test mode: Only process the first N seconds of audio')
     
