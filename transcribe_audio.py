@@ -58,7 +58,13 @@ Important timing instructions:
 1. Start timestamps from the very beginning of the audio file (0:00)
 2. Note any significant periods of silence (5 seconds or longer) with timestamps like:
    [0:00 - 0:45] (Silence)
+3. For speech segments, identify and label speakers as 'Speaker 1:', 'Speaker 2:', etc.
 
+Example format:
+[0:00 - 0:30] (Silence)
+[0:30] Speaker 1: Hello everyone...
+[1:20 - 2:00] (Silence)
+[2:00] Speaker 2: Yes, I agree...
 
 Do not include any headers, titles, or additional text - only the transcription itself.
 
@@ -210,10 +216,40 @@ def transcribe_audio(audio_path, max_chunk_size=DEFAULT_CHUNK_SIZE, test_duratio
                 # Multiple chunks, process each and combine
                 logger.info(f"Processing {len(chunk_paths)} chunks...")
                 transcripts = []
+                max_speaker_num = 0  # Track highest speaker number
                 
                 for i, chunk_path in enumerate(chunk_paths):
                     logger.info(f"Processing chunk {i+1}/{len(chunk_paths)}...")
                     chunk_transcript = transcribe_audio_chunk(chunk_path)
+                    
+                    # If not the first chunk, update speaker numbers
+                    if i > 0 and max_speaker_num > 0:
+                        # Replace speaker numbers with updated ones
+                        for old_num in range(9, 0, -1):  # Start from highest to avoid conflicts
+                            old_patterns = [
+                                f"Speaker {old_num}:",
+                                f"**Speaker {old_num}:**"
+                            ]
+                            new_num = old_num + max_speaker_num
+                            new_replacements = [
+                                f"Speaker {new_num}:",
+                                f"**Speaker {new_num}:**"
+                            ]
+                            
+                            for old_pattern, new_replacement in zip(old_patterns, new_replacements):
+                                chunk_transcript = chunk_transcript.replace(old_pattern, new_replacement)
+                    
+                    # Update max speaker number for next chunk
+                    speaker_labels = set()
+                    for line in chunk_transcript.split('\n'):
+                        if line.strip().startswith(('Speaker ', '**Speaker ')):
+                            for num in range(1, 100):  # Increased range to handle incremented numbers
+                                if f"Speaker {num}:" in line or f"**Speaker {num}:**" in line:
+                                    speaker_labels.add(num)
+                    
+                    if speaker_labels:
+                        max_speaker_num = max(max_speaker_num, max(speaker_labels))
+                    
                     transcripts.append(f"\n\n--- Segment {i+1} ---\n\n{chunk_transcript}")
                 
                 # Combine all transcripts
