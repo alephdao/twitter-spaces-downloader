@@ -58,13 +58,7 @@ Important timing instructions:
 1. Start timestamps from the very beginning of the audio file (0:00)
 2. Note any significant periods of silence (5 seconds or longer) with timestamps like:
    [0:00 - 0:45] (Silence)
-3. For speech segments, identify and label speakers as 'Speaker 1:', 'Speaker 2:', etc.
 
-Example format:
-[0:00 - 0:30] (Silence)
-[0:30] Speaker 1: Hello everyone...
-[1:20 - 2:00] (Silence)
-[2:00] Speaker 2: Yes, I agree...
 
 Do not include any headers, titles, or additional text - only the transcription itself.
 
